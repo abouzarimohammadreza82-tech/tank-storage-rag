@@ -80,53 +80,53 @@ def search(req: SearchRequest):
 
     for match in result["matches"]:
 
-        contexts.append(
-            match["metadata"]["text"]
-        )
+        score = float(match["score"])
+
+        if score > 0.45:
+            contexts.append(
+                match["metadata"]["text"]
+            )
+
+    if len(contexts) == 0:
+
+        return {
+            "answer": "من فقط در زمینه مخازن ذخیره سازی، طراحی، ساخت، جوشکاری، بازرسی و استانداردهای API 650 ، API 620 و API 653 پاسخ می‌دهم."
+        }
 
     context_text = "\n\n".join(contexts)
 
-    system_prompt = """
-شما یک دستیار تخصصی مخازن ذخیره سازی نفت، گاز و پتروشیمی هستید.
+    prompt = f"""
+شما یک کارشناس ارشد مخازن ذخیره سازی هستید.
 
-فقط بر اساس اطلاعات ارائه شده پاسخ بده.
+فقط از اطلاعات زیر استفاده کن.
 
-اگر پاسخ در متن موجود نبود بگو:
+Context:
+{context_text}
 
-"اطلاعات کافی در منابع موجود یافت نشد."
-
-پاسخ را به زبان فارسی و به صورت آموزشی و حرفه ای ارائه کن.
-"""
-
-    user_prompt = f"""
-سوال:
-
+Question:
 {req.query}
 
-منابع:
+قوانین:
 
-{context_text}
+- پاسخ را به فارسی بنویس.
+- پاسخ را حرفه‌ای و روان بنویس.
+- از کپی کامل متن Context خودداری کن.
+- اگر پاسخ در Context وجود ندارد بگو اطلاعات کافی در پایگاه دانش موجود نیست.
 """
 
-    answer = client.chat.completions.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
+        temperature=0.2,
         messages=[
             {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
                 "role": "user",
-                "content": user_prompt
+                "content": prompt
             }
-        ],
-        temperature=0.2
+        ]
     )
 
-    final_answer = answer.choices[0].message.content
+    answer = response.choices[0].message.content
 
     return {
-        "query": req.query,
-        "answer": final_answer,
-        "sources": contexts
+        "answer": answer
     }
