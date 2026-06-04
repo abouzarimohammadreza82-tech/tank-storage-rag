@@ -167,7 +167,7 @@ def search(req: SearchRequest):
 
         score = float(match["score"])
 
-        if score > 0.60:
+        if score > 0.45:
 
             contexts.append(
                 match["metadata"]["text"]
