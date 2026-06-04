@@ -15,8 +15,16 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+INDEX_NAME = os.getenv("INDEX_NAME")
 
-INDEX_NAME = "tank-storage-openai"
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY not found")
+
+if not PINECONE_API_KEY:
+    raise ValueError("PINECONE_API_KEY not found")
+
+if not INDEX_NAME:
+    raise ValueError("INDEX_NAME not found")
 
 # =====================================
 # OPENAI
@@ -40,7 +48,10 @@ index = pc.Index(INDEX_NAME)
 # FASTAPI
 # =====================================
 
-app = FastAPI()
+app = FastAPI(
+    title="Tank Storage RAG",
+    version="1.0.0"
+)
 
 
 class SearchRequest(BaseModel):
@@ -49,6 +60,7 @@ class SearchRequest(BaseModel):
 
 @app.get("/")
 def root():
+
     return {
         "status": "ok",
         "service": "Tank Storage RAG"
@@ -68,7 +80,9 @@ def get_embedding(text):
 @app.post("/search")
 def search(req: SearchRequest):
 
-    query_embedding = get_embedding(req.query)
+    query_embedding = get_embedding(
+        req.query
+    )
 
     result = index.query(
         vector=query_embedding,
@@ -77,20 +91,29 @@ def search(req: SearchRequest):
     )
 
     contexts = []
+    sources = []
 
     for match in result["matches"]:
 
         score = float(match["score"])
 
         if score > 0.45:
+
             contexts.append(
                 match["metadata"]["text"]
             )
 
+            if "source" in match["metadata"]:
+
+                sources.append(
+                    match["metadata"]["source"]
+                )
+
     if len(contexts) == 0:
 
         return {
-            "answer": "من فقط در زمینه مخازن ذخیره سازی، طراحی، ساخت، جوشکاری، بازرسی و استانداردهای API 650 ، API 620 و API 653 پاسخ می‌دهم."
+            "answer": "من فقط در زمینه مخازن ذخیره سازی، طراحی، ساخت، جوشکاری، بازرسی و استانداردهای API 650 ، API 620 و API 653 پاسخ می‌دهم.",
+            "sources": []
         }
 
     context_text = "\n\n".join(contexts)
@@ -98,7 +121,11 @@ def search(req: SearchRequest):
     prompt = f"""
 شما یک کارشناس ارشد مخازن ذخیره سازی هستید.
 
-فقط از اطلاعات زیر استفاده کن.
+فقط و فقط از اطلاعات موجود در Context استفاده کن.
+
+اگر پاسخ در Context وجود ندارد بگو:
+
+"اطلاعات کافی در پایگاه دانش موجود نیست."
 
 Context:
 {context_text}
@@ -108,10 +135,10 @@ Question:
 
 قوانین:
 
-- پاسخ را به فارسی بنویس.
-- پاسخ را حرفه‌ای و روان بنویس.
-- از کپی کامل متن Context خودداری کن.
-- اگر پاسخ در Context وجود ندارد بگو اطلاعات کافی در پایگاه دانش موجود نیست.
+- پاسخ فارسی باشد.
+- پاسخ حرفه‌ای باشد.
+- از کپی مستقیم متن Context خودداری کن.
+- اطلاعات جدید از دانش خودت اضافه نکن.
 """
 
     response = client.chat.completions.create(
@@ -128,5 +155,6 @@ Question:
     answer = response.choices[0].message.content
 
     return {
-        "answer": answer
+        "answer": answer,
+        "sources": list(set(sources))
     }
