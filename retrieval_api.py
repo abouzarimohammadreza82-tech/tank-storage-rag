@@ -7,6 +7,15 @@ from pinecone import Pinecone
 from dotenv import load_dotenv
 import os
 
+from memory import (
+    get_history,
+    add_message
+)
+
+from rate_limit import allow_request
+
+from logger import save_log
+
 load_dotenv()
 
 # =====================================
@@ -25,6 +34,28 @@ if not PINECONE_API_KEY:
 
 if not INDEX_NAME:
     raise ValueError("INDEX_NAME not found")
+
+# =====================================
+# SYSTEM PROMPT
+# =====================================
+
+SYSTEM_PROMPT = """
+شما کارشناس ارشد مخازن ذخیره سازی هستید.
+
+فقط از اطلاعات موجود در Context استفاده کن.
+
+اگر پاسخ در Context پیدا نشد بگو:
+
+اطلاعات کافی در پایگاه دانش موجود نیست.
+
+از دانش خود چیزی اضافه نکن.
+
+پاسخ‌ها باید:
+- فارسی باشند
+- دقیق باشند
+- حرفه‌ای باشند
+- ساختاریافته باشند
+"""
 
 # =====================================
 # OPENAI
@@ -50,13 +81,21 @@ index = pc.Index(INDEX_NAME)
 
 app = FastAPI(
     title="Tank Storage RAG",
-    version="1.0.0"
+    version="2.0.0"
 )
 
+# =====================================
+# REQUEST MODEL
+# =====================================
 
 class SearchRequest(BaseModel):
     query: str
+    chat_id: int
+    user_id: int
 
+# =====================================
+# ROOT
+# =====================================
 
 @app.get("/")
 def root():
@@ -66,6 +105,9 @@ def root():
         "service": "Tank Storage RAG"
     }
 
+# =====================================
+# EMBEDDING
+# =====================================
 
 def get_embedding(text):
 
@@ -76,13 +118,41 @@ def get_embedding(text):
 
     return response.data[0].embedding
 
+# =====================================
+# SEARCH
+# =====================================
 
 @app.post("/search")
 def search(req: SearchRequest):
 
+    # -----------------------------
+    # RATE LIMIT
+    # -----------------------------
+
+    if not allow_request(req.user_id):
+
+        return {
+            "answer": "⏳ لطفاً چند ثانیه صبر کنید و دوباره تلاش نمایید.",
+            "sources": []
+        }
+
+    # -----------------------------
+    # MEMORY
+    # -----------------------------
+
+    history = get_history(req.chat_id)
+
+    # -----------------------------
+    # EMBEDDING
+    # -----------------------------
+
     query_embedding = get_embedding(
         req.query
     )
+
+    # -----------------------------
+    # PINECONE SEARCH
+    # -----------------------------
 
     result = index.query(
         vector=query_embedding,
@@ -97,7 +167,7 @@ def search(req: SearchRequest):
 
         score = float(match["score"])
 
-        if score > 0.45:
+        if score > 0.60:
 
             contexts.append(
                 match["metadata"]["text"]
@@ -109,24 +179,25 @@ def search(req: SearchRequest):
                     match["metadata"]["source"]
                 )
 
+    # -----------------------------
+    # NO CONTEXT FOUND
+    # -----------------------------
+
     if len(contexts) == 0:
 
         return {
-            "answer": "من فقط در زمینه مخازن ذخیره سازی، طراحی، ساخت، جوشکاری، بازرسی و استانداردهای API 650 ، API 620 و API 653 پاسخ می‌دهم.",
+            "answer":
+            "اطلاعات کافی در پایگاه دانش موجود نیست.",
             "sources": []
         }
+
+    # -----------------------------
+    # BUILD CONTEXT
+    # -----------------------------
 
     context_text = "\n\n".join(contexts)
 
     prompt = f"""
-شما یک کارشناس ارشد مخازن ذخیره سازی هستید.
-
-فقط و فقط از اطلاعات موجود در Context استفاده کن.
-
-اگر پاسخ در Context وجود ندارد بگو:
-
-"اطلاعات کافی در پایگاه دانش موجود نیست."
-
 Context:
 {context_text}
 
@@ -135,24 +206,81 @@ Question:
 
 قوانین:
 
-- پاسخ فارسی باشد.
-- پاسخ حرفه‌ای باشد.
-- از کپی مستقیم متن Context خودداری کن.
-- اطلاعات جدید از دانش خودت اضافه نکن.
+- فقط از Context استفاده کن.
+- اگر پاسخ وجود ندارد اعلام کن.
+- اطلاعات جدید اضافه نکن.
+- پاسخ فارسی و حرفه‌ای باشد.
 """
+
+    # -----------------------------
+    # BUILD MESSAGES
+    # -----------------------------
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    messages.extend(history)
+
+    messages.append(
+        {
+            "role": "user",
+            "content": prompt
+        }
+    )
+
+    # -----------------------------
+    # GPT
+    # -----------------------------
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.2,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        messages=messages
     )
 
     answer = response.choices[0].message.content
+
+    # -----------------------------
+    # SAVE MEMORY
+    # -----------------------------
+
+    add_message(
+        req.chat_id,
+        "user",
+        req.query
+    )
+
+    add_message(
+        req.chat_id,
+        "assistant",
+        answer
+    )
+
+    # -----------------------------
+    # LOGGING
+    # -----------------------------
+
+    save_log(
+        req.user_id,
+        req.query,
+        answer
+    )
+
+    # -----------------------------
+    # LONG ANSWERS
+    # -----------------------------
+
+    if len(answer) > 3500:
+
+        answer = answer[:3500] + "..."
+
+    # -----------------------------
+    # RESPONSE
+    # -----------------------------
 
     return {
         "answer": answer,
