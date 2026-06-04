@@ -1,11 +1,11 @@
-import os
-
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from openai import OpenAI
 from pinecone import Pinecone
+
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 
@@ -15,13 +15,8 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = os.getenv("INDEX_NAME", "tank-storage-openai")
 
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY is missing")
-
-if not PINECONE_API_KEY:
-    raise ValueError("PINECONE_API_KEY is missing")
+INDEX_NAME = "tank-storage-openai"
 
 # =====================================
 # OPENAI
@@ -30,18 +25,6 @@ if not PINECONE_API_KEY:
 client = OpenAI(
     api_key=OPENAI_API_KEY
 )
-
-# =====================================
-# EMBEDDING
-# =====================================
-
-def get_embedding(text: str):
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
-
-    return response.data[0].embedding
 
 # =====================================
 # PINECONE
@@ -68,8 +51,18 @@ class SearchRequest(BaseModel):
 def root():
     return {
         "status": "ok",
-        "index": INDEX_NAME
+        "service": "Tank Storage RAG"
     }
+
+
+def get_embedding(text):
+
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+
+    return response.data[0].embedding
 
 
 @app.post("/search")
@@ -86,12 +79,54 @@ def search(req: SearchRequest):
     contexts = []
 
     for match in result["matches"]:
-        contexts.append({
-            "score": float(match["score"]),
-            "text": match["metadata"]["text"]
-        })
+
+        contexts.append(
+            match["metadata"]["text"]
+        )
+
+    context_text = "\n\n".join(contexts)
+
+    system_prompt = """
+شما یک دستیار تخصصی مخازن ذخیره سازی نفت، گاز و پتروشیمی هستید.
+
+فقط بر اساس اطلاعات ارائه شده پاسخ بده.
+
+اگر پاسخ در متن موجود نبود بگو:
+
+"اطلاعات کافی در منابع موجود یافت نشد."
+
+پاسخ را به زبان فارسی و به صورت آموزشی و حرفه ای ارائه کن.
+"""
+
+    user_prompt = f"""
+سوال:
+
+{req.query}
+
+منابع:
+
+{context_text}
+"""
+
+    answer = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ],
+        temperature=0.2
+    )
+
+    final_answer = answer.choices[0].message.content
 
     return {
         "query": req.query,
-        "contexts": contexts
+        "answer": final_answer,
+        "sources": contexts
     }
