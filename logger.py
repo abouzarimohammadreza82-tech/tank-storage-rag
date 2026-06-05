@@ -1,11 +1,21 @@
-from db import conn, cursor
 from datetime import datetime
 
-def save_log(user_id, query, answer):
+from supabase_client import supabase
 
-    cursor.execute(
-        "INSERT INTO logs VALUES (?, ?, ?, ?)",
-        (user_id, query, answer, datetime.utcnow().isoformat())
-    )
 
-    conn.commit()
+def save_log(
+    user_id,
+    query,
+    answer,
+    response_time_ms=0
+):
+
+    supabase.table(
+        "logs"
+    ).insert({
+        "user_id": user_id,
+        "query": query,
+        "answer": answer,
+        "response_time_ms": response_time_ms,
+        "created_at": datetime.utcnow().isoformat()
+    }).execute()

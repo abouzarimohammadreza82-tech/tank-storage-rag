@@ -1,26 +1,35 @@
-from db import conn, cursor
-import json
+from supabase_client import supabase
+
 
 def get_history(chat_id):
 
-    cursor.execute(
-        "SELECT role, content FROM messages WHERE chat_id=?",
-        (chat_id,)
+    result = (
+        supabase
+        .table("chat_history")
+        .select("*")
+        .eq("chat_id", chat_id)
+        .order("created_at")
+        .limit(10)
+        .execute()
     )
 
-    rows = cursor.fetchall()
+    rows = result.data or []
 
     return [
-        {"role": r[0], "content": r[1]}
-        for r in rows
+        {
+            "role": row["role"],
+            "content": row["content"]
+        }
+        for row in rows
     ]
 
 
 def add_message(chat_id, role, content):
 
-    cursor.execute(
-        "INSERT INTO messages VALUES (?, ?, ?)",
-        (chat_id, role, content)
-    )
-
-    conn.commit()
+    supabase.table(
+        "chat_history"
+    ).insert({
+        "chat_id": chat_id,
+        "role": role,
+        "content": content
+    }).execute()

@@ -1,3 +1,4 @@
+import time
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -128,7 +129,7 @@ def search(req: SearchRequest):
     # -----------------------------
     # RATE LIMIT
     # -----------------------------
-
+    start_time = time.time()
     if not allow_request(req.user_id):
 
         return {
@@ -243,7 +244,9 @@ Question:
     )
 
     answer = response.choices[0].message.content
-
+    response_time_ms = int(
+    (time.time() - start_time) * 1000
+    )
     # -----------------------------
     # SAVE MEMORY
     # -----------------------------
@@ -265,10 +268,11 @@ Question:
     # -----------------------------
 
     save_log(
-        req.user_id,
-        req.query,
-        answer
-    )
+    req.user_id,
+    req.query,
+    answer,
+    response_time_ms
+    ) 
 
     # -----------------------------
     # LONG ANSWERS
