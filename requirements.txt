@@ -6,3 +6,4 @@ python-dotenv==1.2.2
 pydantic==2.13.4
 python-pptx==1.0.2
 langchain-text-splitters==1.1.2
+supabase==2.18.1

@@ -1,15 +1,26 @@
-from collections import defaultdict
-
-memory_store = defaultdict(list)
+from db import conn, cursor
+import json
 
 def get_history(chat_id):
-    return memory_store[chat_id]
+
+    cursor.execute(
+        "SELECT role, content FROM messages WHERE chat_id=?",
+        (chat_id,)
+    )
+
+    rows = cursor.fetchall()
+
+    return [
+        {"role": r[0], "content": r[1]}
+        for r in rows
+    ]
+
 
 def add_message(chat_id, role, content):
 
-    memory_store[chat_id].append({
-        "role": role,
-        "content": content
-    })
+    cursor.execute(
+        "INSERT INTO messages VALUES (?, ?, ?)",
+        (chat_id, role, content)
+    )
 
-    memory_store[chat_id] = memory_store[chat_id][-8:]
+    conn.commit()

@@ -1,24 +1,11 @@
-import json
+from db import conn, cursor
 from datetime import datetime
 
 def save_log(user_id, query, answer):
 
-    record = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "user_id": user_id,
-        "query": query,
-        "answer": answer
-    }
+    cursor.execute(
+        "INSERT INTO logs VALUES (?, ?, ?, ?)",
+        (user_id, query, answer, datetime.utcnow().isoformat())
+    )
 
-    with open(
-        "chat_logs.jsonl",
-        "a",
-        encoding="utf-8"
-    ) as f:
-
-        f.write(
-            json.dumps(
-                record,
-                ensure_ascii=False
-            ) + "\n"
-        )
+    conn.commit()

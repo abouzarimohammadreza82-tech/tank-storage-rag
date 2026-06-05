@@ -1,16 +1,27 @@
 import time
+from db import conn, cursor
 
-last_requests = {}
-
-def allow_request(user_id, seconds=2):
+def allow_request(user_id):
 
     now = time.time()
 
-    if user_id in last_requests:
+    cursor.execute(
+        "SELECT last_time FROM ratelimit WHERE user_id=?",
+        (user_id,)
+    )
 
-        if now - last_requests[user_id] < seconds:
-            return False
+    row = cursor.fetchone()
 
-    last_requests[user_id] = now
+    if row and now - row[0] < 2:
+        return False
+
+    cursor.execute("""
+    INSERT INTO ratelimit(user_id, last_time)
+    VALUES (?, ?)
+    ON CONFLICT(user_id)
+    DO UPDATE SET last_time=excluded.last_time
+    """, (user_id, now))
+
+    conn.commit()
 
     return True
