@@ -1,9 +1,8 @@
-fastapi==0.136.3
-uvicorn==0.46.0
-openai==2.36.0
-pinecone==7.3.0
-python-dotenv==1.2.2
-pydantic==2.13.4
-python-pptx==1.0.2
-langchain-text-splitters==1.1.2
-supabase==2.18.1
+fastapi
+uvicorn
+openai
+pinecone
+supabase
+python-dotenv
+langchain-text-splitters
+python-pptx

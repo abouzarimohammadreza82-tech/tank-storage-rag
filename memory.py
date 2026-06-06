@@ -1,47 +1,36 @@
 from supabase_client import supabase
-import traceback
 
-def get_history(chat_id):
+
+def get_history(chat_id: int):
     try:
-        # تبدیل chat_id به عدد برای مطابقت با ستون int8
-        chat_id_int = int(chat_id)
-
         result = (
-            supabase
-            .table("chat_history")
+            supabase.table("chat_history")
             .select("*")
-            .eq("chat_id", chat_id_int)
-            .order("created_at")
+            .eq("chat_id", chat_id)
+            .order("created_at", desc=True)
             .limit(10)
             .execute()
         )
 
-        rows = result.data or []
+        rows = list(reversed(result.data or []))
 
         return [
             {
-                "role": row.get("role", "system"),
-                "content": row.get("content", "")
+                "role": r.get("role"),
+                "content": r.get("content")
             }
-            for row in rows
+            for r in rows
         ]
-
-    except Exception as e:
-        # چاپ لاگ برای دیباگ
-        print("Error in get_history:", traceback.format_exc())
-        # برگرداندن لیست خالی اگر مشکلی پیش آمد
+    except:
         return []
 
-def add_message(chat_id, role, content):
-    try:
-        chat_id_int = int(chat_id)
 
+def add_message(chat_id: int, role: str, content: str):
+    try:
         supabase.table("chat_history").insert({
-            "chat_id": chat_id_int,
+            "chat_id": chat_id,
             "role": role,
             "content": content
         }).execute()
-
-    except Exception as e:
-        # چاپ لاگ برای دیباگ
-        print("Error in add_message:", traceback.format_exc())
+    except:
+        pass

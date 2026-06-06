@@ -1,27 +1,22 @@
 import time
-from db import conn, cursor
+from collections import defaultdict
+import threading
 
-def allow_request(user_id):
+_lock = threading.Lock()
 
+_last_request = defaultdict(float)
+
+RATE_LIMIT_SECONDS = 2
+
+
+def allow_request(user_id: int) -> bool:
     now = time.time()
 
-    cursor.execute(
-        "SELECT last_time FROM ratelimit WHERE user_id=?",
-        (user_id,)
-    )
+    with _lock:
+        last = _last_request[user_id]
 
-    row = cursor.fetchone()
+        if now - last < RATE_LIMIT_SECONDS:
+            return False
 
-    if row and now - row[0] < 2:
-        return False
-
-    cursor.execute("""
-    INSERT INTO ratelimit(user_id, last_time)
-    VALUES (?, ?)
-    ON CONFLICT(user_id)
-    DO UPDATE SET last_time=excluded.last_time
-    """, (user_id, now))
-
-    conn.commit()
-
-    return True
+        _last_request[user_id] = now
+        return True

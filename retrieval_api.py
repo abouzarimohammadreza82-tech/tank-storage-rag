@@ -5,36 +5,29 @@ from pydantic import BaseModel
 from openai import OpenAI
 from pinecone import Pinecone
 
-from dotenv import load_dotenv
-import os
-
-from memory import (
-    get_history,
-    add_message
+from config import (
+    OPENAI_API_KEY,
+    PINECONE_API_KEY,
+    INDEX_NAME
 )
 
+from memory import get_history, add_message
 from rate_limit import allow_request
-
 from logger import save_log
 
-load_dotenv()
-
 # =====================================
-# CONFIG
+# INIT
 # =====================================
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = os.getenv("INDEX_NAME")
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY not found")
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(INDEX_NAME)
 
-if not PINECONE_API_KEY:
-    raise ValueError("PINECONE_API_KEY not found")
-
-if not INDEX_NAME:
-    raise ValueError("INDEX_NAME not found")
+app = FastAPI(
+    title="Tank Storage RAG",
+    version="3.0.0"
+)
 
 # =====================================
 # SYSTEM PROMPT
@@ -43,50 +36,15 @@ if not INDEX_NAME:
 SYSTEM_PROMPT = """
 شما کارشناس ارشد مخازن ذخیره سازی هستید.
 
-فقط از اطلاعات موجود در Context استفاده کن.
-
-اگر پاسخ در Context پیدا نشد بگو:
-
-اطلاعات کافی در پایگاه دانش موجود نیست.
-
-از دانش خود چیزی اضافه نکن.
-
-پاسخ‌ها باید:
-- فارسی باشند
-- دقیق باشند
-- حرفه‌ای باشند
-- ساختاریافته باشند
+قوانین:
+- فقط از Context استفاده کن
+- اگر پاسخ وجود ندارد بگو اطلاعات کافی نیست
+- چیزی اضافه نکن
+- پاسخ فارسی، دقیق و حرفه‌ای باشد
 """
 
 # =====================================
-# OPENAI
-# =====================================
-
-client = OpenAI(
-    api_key=OPENAI_API_KEY
-)
-
-# =====================================
-# PINECONE
-# =====================================
-
-pc = Pinecone(
-    api_key=PINECONE_API_KEY
-)
-
-index = pc.Index(INDEX_NAME)
-
-# =====================================
-# FASTAPI
-# =====================================
-
-app = FastAPI(
-    title="Tank Storage RAG",
-    version="2.0.0"
-)
-
-# =====================================
-# REQUEST MODEL
+# MODEL
 # =====================================
 
 class SearchRequest(BaseModel):
@@ -94,67 +52,64 @@ class SearchRequest(BaseModel):
     chat_id: int
     user_id: int
 
+
 # =====================================
 # ROOT
 # =====================================
 
 @app.get("/")
 def root():
+    return {"status": "ok", "service": "Tank Storage RAG"}
 
-    return {
-        "status": "ok",
-        "service": "Tank Storage RAG"
-    }
 
 # =====================================
 # EMBEDDING
 # =====================================
 
-def get_embedding(text):
-
+def get_embedding(text: str):
     response = client.embeddings.create(
         model="text-embedding-3-small",
         input=text
     )
-
     return response.data[0].embedding
 
+
 # =====================================
-# SEARCH
+# SEARCH ENDPOINT
 # =====================================
 
 @app.post("/search")
 def search(req: SearchRequest):
 
+    start_time = time.time()
+
     # -----------------------------
     # RATE LIMIT
     # -----------------------------
-    start_time = time.time()
     if not allow_request(req.user_id):
-
         return {
-            "answer": "⏳ لطفاً چند ثانیه صبر کنید و دوباره تلاش نمایید.",
+            "answer": "⏳ لطفاً چند ثانیه صبر کنید.",
             "sources": []
         }
 
     # -----------------------------
+    # SAVE USER MESSAGE (safe-first)
+    # -----------------------------
+    add_message(req.chat_id, "user", req.query)
+
+    # -----------------------------
     # MEMORY
     # -----------------------------
-
     history = get_history(req.chat_id)
 
     # -----------------------------
     # EMBEDDING
     # -----------------------------
-
-    query_embedding = get_embedding(
-        req.query
-    )
+    query_embedding = get_embedding(req.query)
 
     # -----------------------------
     # PINECONE SEARCH
     # -----------------------------
-
     result = index.query(
         vector=query_embedding,
         top_k=5,
@@ -164,38 +119,34 @@ def search(req: SearchRequest):
     contexts = []
     sources = []
 
-    for match in result["matches"]:
-
-        score = float(match["score"])
+    for match in result.get("matches", []):
+        score = float(match.get("score", 0))
 
         if score > 0.45:
+            metadata = match.get("metadata", {})
 
-            contexts.append(
-                match["metadata"]["text"]
-            )
+            contexts.append(metadata.get("text", ""))
 
-            if "source" in match["metadata"]:
-
-                sources.append(
-                    match["metadata"]["source"]
-                )
+            if metadata.get("source"):
+                sources.append(metadata["source"])
 
     # -----------------------------
-    # NO CONTEXT FOUND
+    # NO CONTEXT
     # -----------------------------
+    if not contexts:
+        answer = "اطلاعات کافی در پایگاه دانش موجود نیست."
 
-    if len(contexts) == 0:
+        add_message(req.chat_id, "assistant", answer)
+        save_log(req.user_id, req.query, answer, 0)
 
         return {
-            "answer":
-            "اطلاعات کافی در پایگاه دانش موجود نیست.",
+            "answer": answer,
             "sources": []
         }
 
     # -----------------------------
     # BUILD CONTEXT
     # -----------------------------
-
     context_text = "\n\n".join(contexts)
 
     prompt = f"""
@@ -204,39 +155,17 @@ Context:
 
 Question:
 {req.query}
-
-قوانین:
-
-- فقط از Context استفاده کن.
-- اگر پاسخ وجود ندارد اعلام کن.
-- اطلاعات جدید اضافه نکن.
-- پاسخ فارسی و حرفه‌ای باشد.
 """
 
-    # -----------------------------
-    # BUILD MESSAGES
-    # -----------------------------
-
     messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT
-        }
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *history,
+        {"role": "user", "content": prompt}
     ]
 
-    messages.extend(history)
-
-    messages.append(
-        {
-            "role": "user",
-            "content": prompt
-        }
-    )
-
     # -----------------------------
-    # GPT
+    # GPT CALL
     # -----------------------------
-
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.2,
@@ -244,49 +173,34 @@ Question:
     )
 
     answer = response.choices[0].message.content
-    response_time_ms = int(
-    (time.time() - start_time) * 1000
-    )
-    # -----------------------------
-    # SAVE MEMORY
-    # -----------------------------
 
-    add_message(
-        req.chat_id,
-        "user",
-        req.query
-    )
-
-    add_message(
-        req.chat_id,
-        "assistant",
-        answer
-    )
+    response_time_ms = int((time.time() - start_time) * 1000)
 
     # -----------------------------
-    # LOGGING
+    # SAVE ASSISTANT MESSAGE
     # -----------------------------
+    add_message(req.chat_id, "assistant", answer)
 
+    # -----------------------------
+    # LOGGING (safe)
+    # -----------------------------
     save_log(
-    req.user_id,
-    req.query,
-    answer,
-    response_time_ms
-    ) 
+        req.user_id,
+        req.query,
+        answer,
+        response_time_ms
+    )
 
     # -----------------------------
-    # LONG ANSWERS
+    # LIMIT OUTPUT SIZE
     # -----------------------------
-
     if len(answer) > 3500:
-
         answer = answer[:3500] + "..."
 
     # -----------------------------
     # RESPONSE
     # -----------------------------
-
     return {
         "answer": answer,
-        "sources": list(set(sources))
+        "sources": list(dict.fromkeys(sources))
     }
