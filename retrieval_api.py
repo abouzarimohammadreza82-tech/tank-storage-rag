@@ -59,7 +59,17 @@ class SearchRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "Tank Storage RAG"}
+    return {
+        "status": "ok",
+        "service": "Tank Storage RAG"
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy"
+    }
 
 
 # =====================================
